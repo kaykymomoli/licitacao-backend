@@ -3,10 +3,17 @@ FROM node:20-alpine
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm install --production
+
+# Instalar TODAS as dependências (incluindo dev) para o build
+RUN npm install
 
 COPY . .
+
+# Fazer o build
 RUN npm run build
+
+# Remover devDependencies após o build
+RUN npm prune --production
 
 EXPOSE 3000
 

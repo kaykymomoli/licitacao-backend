@@ -7,6 +7,7 @@ import { StorageModule } from './storage/storage.module';
 import { RagModule } from './rag/rag.module';
 import { AppController } from './app.controller';
 import { SupabaseModule } from './supabase/supabase.module';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { SupabaseModule } from './supabase/supabase.module';
     DocumentsModule,
     StorageModule,
     RagModule,
+    AdminModule,
   ],
   controllers: [AppController],
 })

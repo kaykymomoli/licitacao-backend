@@ -6,6 +6,7 @@ import {
   Get,
   Param,
   NotFoundException,
+  Patch,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -172,4 +173,28 @@ export class AgentController {
     if (!data) throw new NotFoundException('Sessão não encontrada');
     return data;
   }
+
+  @Patch('session/:id/title')
+    async updateSessionTitle(
+      @Param('id') id: string,
+      @Body() body: { title: string },
+    ) {
+      const { data: session } = await this.supabase
+        .getAdminClient()
+        .from('sessions')
+        .select('metadata')
+        .eq('id', id)
+        .single();
+
+      const currentMetadata = session?.metadata || {};
+
+      const { error } = await this.supabase
+        .getAdminClient()
+        .from('sessions')
+        .update({ metadata: { ...currentMetadata, title: body.title } })
+        .eq('id', id);
+
+      if (error) throw new Error(error.message);
+      return { success: true };
+    }
 }

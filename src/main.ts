@@ -7,14 +7,19 @@ import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';
 
-// Configurar LangSmith antes de qualquer coisa
 process.env.LANGCHAIN_TRACING_V2 = process.env.LANGCHAIN_TRACING_V2 ?? 'false';
 process.env.LANGCHAIN_PROJECT = process.env.LANGCHAIN_PROJECT ?? 'licitacao-saas';
 
 async function bootstrap() {
   const fastifyAdapter = new FastifyAdapter();
 
-  // Registrar multipart antes de criar a aplicação
+  fastifyAdapter.register(require('@fastify/cors'), {
+    origin: true,
+    credentials: true,
+    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+  });
+
   fastifyAdapter.register(
     require('@fastify/multipart'),
     {
@@ -40,16 +45,9 @@ async function bootstrap() {
     }),
   );
 
-  app.enableCors({
-    origin: true,
-    credentials: true,
-    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
-  });
-
   const port = configService.get<number>('PORT') ?? 3000;
   await app.listen(port, '0.0.0.0');
   console.log(`Servidor rodando na porta ${port}`);
-} 
+}
 
 bootstrap();

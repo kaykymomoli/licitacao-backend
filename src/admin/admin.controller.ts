@@ -1,10 +1,9 @@
 import { Controller, Post, Get, Delete, Body, Param, UseGuards } from '@nestjs/common';
-import { JwtAuthGuard } from '../auth/jwt.guard';
 import { AdminGuard } from './admin.guard';
 import { SupabaseService } from '../supabase/supabase.service';
 
 @Controller('admin')
-@UseGuards(JwtAuthGuard, AdminGuard)
+@UseGuards(AdminGuard)
 export class AdminController {
   constructor(private supabase: SupabaseService) {}
 

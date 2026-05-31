@@ -40,11 +40,16 @@ async function bootstrap() {
     }),
   );
 
-  app.enableCors({ origin: '*' });
+  app.enableCors({
+    origin: true,
+    credentials: true,
+    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+  });
 
   const port = configService.get<number>('PORT') ?? 3000;
   await app.listen(port, '0.0.0.0');
   console.log(`Servidor rodando na porta ${port}`);
-}
+} 
 
 bootstrap();

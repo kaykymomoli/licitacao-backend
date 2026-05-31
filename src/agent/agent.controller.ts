@@ -7,6 +7,7 @@ import {
   Param,
   NotFoundException,
   Patch,
+  Delete,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -14,7 +15,7 @@ import { AuthUser } from '../auth/jwt.strategy';
 import { AgentService } from './agent.service';
 import { MemoryService } from './memory.service';
 import { SupabaseService } from '../supabase/supabase.service';
-import { IsString, IsNotEmpty, IsOptional } from 'class-validator';
+import { IsString, IsNotEmpty } from 'class-validator';
 
 class StartSessionDto {
   @IsString()
@@ -95,7 +96,6 @@ export class AgentController {
 
     await this.memoryService.saveMessage(body.sessionId, 'user', body.message);
 
-    // Identificar tipo do agente pela sessão
     const { data: session } = await this.supabase
       .getAdminClient()
       .from('sessions')
@@ -133,30 +133,34 @@ export class AgentController {
     };
   }
 
-  // Retomar sessão existente
   @Get('session/:id/resume')
   async resumeSession(
     @Param('id') sessionId: string,
     @CurrentUser() user: AuthUser,
   ) {
     const session = await this.memoryService.loadFullSession(sessionId);
-
     if (!session) throw new NotFoundException('Sessão não encontrada');
+
+    const { data: sessionData } = await this.supabase
+      .getAdminClient()
+      .from('sessions')
+      .select('*')
+      .eq('id', sessionId)
+      .single();
 
     return {
       sessionId,
+      session: sessionData,
       state: session.state,
       messages: session.messages,
     };
   }
 
-  // Listar sessões do usuário
   @Get('sessions')
   async getSessions(@CurrentUser() user: AuthUser) {
     return this.memoryService.listUserSessions(user.id);
   }
 
-  // Buscar sessão específica
   @Get('session/:id')
   async getSession(
     @Param('id') sessionId: string,
@@ -175,26 +179,29 @@ export class AgentController {
   }
 
   @Patch('session/:id/title')
-    async updateSessionTitle(
-      @Param('id') id: string,
-      @Body() body: { title: string },
-    ) {
-      const { data: session } = await this.supabase
-        .getAdminClient()
-        .from('sessions')
-        .select('metadata')
-        .eq('id', id)
-        .single();
+  async updateSessionTitle(
+    @Param('id') id: string,
+    @Body() body: { title: string },
+  ) {
+    const { error } = await this.supabase
+      .getAdminClient()
+      .from('sessions')
+      .update({ title: body.title })
+      .eq('id', id);
 
-      const currentMetadata = session?.metadata || {};
+    if (error) throw new Error(error.message);
+    return { success: true };
+  }
 
-      const { error } = await this.supabase
-        .getAdminClient()
-        .from('sessions')
-        .update({ metadata: { ...currentMetadata, title: body.title } })
-        .eq('id', id);
+  @Delete('session/:id')
+  async deleteSession(@Param('id') id: string) {
+    const { error } = await this.supabase
+      .getAdminClient()
+      .from('sessions')
+      .delete()
+      .eq('id', id);
 
-      if (error) throw new Error(error.message);
-      return { success: true };
-    }
+    if (error) throw new Error(error.message);
+    return { success: true };
+  }
 }

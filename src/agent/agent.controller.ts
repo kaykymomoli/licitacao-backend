@@ -87,51 +87,59 @@ export class AgentController {
   }
 
   @Post('message')
-  async sendMessage(
-    @Body() body: SendMessageDto,
-    @CurrentUser() user: AuthUser,
-  ) {
-    const state = await this.memoryService.loadAgentState(body.sessionId);
-    if (!state) throw new NotFoundException('Sessão não encontrada');
+    async sendMessage(
+      @Body() body: SendMessageDto,
+      @CurrentUser() user: AuthUser,
+    ) {
+      const state = await this.memoryService.loadAgentState(body.sessionId);
+      if (!state) throw new NotFoundException('Sessão não encontrada');
 
-    await this.memoryService.saveMessage(body.sessionId, 'user', body.message);
+      await this.memoryService.saveMessage(body.sessionId, 'user', body.message);
 
-    const { data: session } = await this.supabase
-      .getAdminClient()
-      .from('sessions')
-      .select('agent_type')
-      .eq('id', body.sessionId)
-      .single();
+      // Remove o prefixo [FILE:nome] antes de passar ao agente — só serve para o histórico
+      const fileMatch = body.message.match(/^\[FILE:(.+?)\]\n?([\s\S]*)$/);
+      const messageForAgent = fileMatch ? (fileMatch[2].trim() || body.message) : body.message;
 
-    let result: any;
+      const { data: session } = await this.supabase
+        .getAdminClient()
+        .from('sessions')
+        .select('agent_type')
+        .eq('id', body.sessionId)
+        .single();
 
-    if (session?.agent_type === 'TR') {
-      result = await this.agentService.sendMessageToTr(
-        user.id, body.sessionId, body.message, state,
-      );
-    } else if (session?.agent_type === 'ETP') {
-      result = await this.agentService.sendMessageToEtp(
-        user.id, body.sessionId, body.message, state,
-      );
-    } else {
-      throw new Error('Tipo de agente não suportado');
+      // Documento já gerado — responde naturalmente sem re-executar o grafo
+      if (state.documentUrl) {
+        const tipoLabel = session?.agent_type === 'TR' ? 'Termo de Referência' : 'Estudo Técnico Preliminar';
+        const response = await this.agentService.respondAfterDocument(tipoLabel, state.documentUrl, messageForAgent);
+        await this.memoryService.saveMessage(body.sessionId, 'assistant', response);
+        return { response, sessionId: body.sessionId };
+      }
+
+      let result: any;
+
+      if (session?.agent_type === 'TR') {
+        result = await this.agentService.sendMessageToTr(user.id, body.sessionId, messageForAgent, state);
+      } else if (session?.agent_type === 'ETP') {
+        result = await this.agentService.sendMessageToEtp(user.id, body.sessionId, messageForAgent, state);
+      } else {
+        throw new Error('Tipo de agente não suportado');
+      }
+
+      await Promise.all([
+        this.memoryService.saveAgentState(body.sessionId, result.state),
+        this.memoryService.saveMessage(body.sessionId, 'assistant', result.response),
+      ]);
+
+      if (result.documentUrl) {
+        await this.memoryService.completeSession(body.sessionId);
+      }
+
+      return {
+        response: result.response,
+        documentUrl: result.documentUrl,
+        sessionId: body.sessionId,
+      };
     }
-
-    await Promise.all([
-      this.memoryService.saveAgentState(body.sessionId, result.state),
-      this.memoryService.saveMessage(body.sessionId, 'assistant', result.response),
-    ]);
-
-    if (result.documentUrl) {
-      await this.memoryService.completeSession(body.sessionId);
-    }
-
-    return {
-      response: result.response,
-      documentUrl: result.documentUrl,
-      sessionId: body.sessionId,
-    };
-  }
 
   @Get('session/:id/resume')
   async resumeSession(

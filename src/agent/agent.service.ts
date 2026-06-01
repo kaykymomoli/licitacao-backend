@@ -28,35 +28,21 @@ export class AgentService implements OnModuleInit {
     this.logger.log('Agentes TR e ETP inicializados');
   }
 
-  // ── TR ──────────────────────────────────────────
-
-  async startTrSession(
-    userId: string,
-    sessionId: string,
-  ): Promise<{ message: string; state: Record<string, any> }> {
+  async startTrSession(userId: string, sessionId: string): Promise<{ message: string; state: Record<string, any> }> {
     const result = await this.trStartGraph.invoke({
-      userId,
-      sessionId,
-      messages: [],
-      collectedSections: {},
-      currentSectionIndex: 0,
-      allSectionsCollected: false,
-      template: null,
-      documentId: '',
-      documentUrl: '',
+      userId, sessionId, messages: [],
+      collectedSections: {}, currentSectionIndex: 0,
+      allSectionsCollected: false, template: null,
+      documentId: '', documentUrl: '',
     });
 
     const lastMessage = result.messages[result.messages.length - 1];
     const state: Record<string, any> = {
-      userId: result.userId,
-      sessionId: result.sessionId,
-      messages: [],
+      userId: result.userId, sessionId: result.sessionId, messages: [],
       collectedSections: result.collectedSections ?? {},
       currentSectionIndex: result.currentSectionIndex ?? 0,
       allSectionsCollected: result.allSectionsCollected ?? false,
-      template: result.template,
-      documentId: '',
-      documentUrl: '',
+      template: result.template, documentId: '', documentUrl: '',
     };
 
     return {
@@ -65,73 +51,31 @@ export class AgentService implements OnModuleInit {
     };
   }
 
-  async sendMessageToTr(
-  userId: string,
-  sessionId: string,
-  userMessage: string,
-  currentState: any,
-): Promise<{ response: string; state: any; documentUrl?: string }> {
-  const newMessage = new HumanMessage(userMessage);
-
-  const result = await this.trReplyGraph.invoke(
-    {
-      ...currentState,
-      userId,
-      sessionId,
-      messages: [...(currentState.messages ?? []), newMessage],
-    },
-    {
-      recursionLimit: 10,
-      runName: 'agente-tr',
-      tags: ['TR', 'licitacao'],
-      metadata: {
-        userId,
-        sessionId,
-        agentType: 'TR',
-      },
-    },
-  );
-
-    const lastAiMessage = [...result.messages]
-      .reverse()
-      .find((m: any) => m._getType() === 'ai');
-
-    return {
-      response: lastAiMessage?.content ?? '',
-      state: result,
-      documentUrl: result.documentUrl,
-    };
+  async sendMessageToTr(userId: string, sessionId: string, userMessage: string, currentState: any): Promise<{ response: string; state: any; documentUrl?: string }> {
+    const newMessage = new HumanMessage(userMessage);
+    const result = await this.trReplyGraph.invoke(
+      { ...currentState, userId, sessionId, messages: [...(currentState.messages ?? []), newMessage] },
+      { recursionLimit: 10, runName: 'agente-tr', tags: ['TR', 'licitacao'], metadata: { userId, sessionId, agentType: 'TR' } },
+    );
+    const lastAiMessage = [...result.messages].reverse().find((m: any) => m._getType() === 'ai');
+    return { response: lastAiMessage?.content ?? '', state: result, documentUrl: result.documentUrl };
   }
 
-  // ── ETP ─────────────────────────────────────────
-
-  async startEtpSession(
-    userId: string,
-    sessionId: string,
-  ): Promise<{ message: string; state: Record<string, any> }> {
+  async startEtpSession(userId: string, sessionId: string): Promise<{ message: string; state: Record<string, any> }> {
     const result = await this.etpStartGraph.invoke({
-      userId,
-      sessionId,
-      messages: [],
-      collectedSections: {},
-      currentSectionIndex: 0,
-      allSectionsCollected: false,
-      template: null,
-      documentId: '',
-      documentUrl: '',
+      userId, sessionId, messages: [],
+      collectedSections: {}, currentSectionIndex: 0,
+      allSectionsCollected: false, template: null,
+      documentId: '', documentUrl: '',
     });
 
     const lastMessage = result.messages[result.messages.length - 1];
     const state: Record<string, any> = {
-      userId: result.userId,
-      sessionId: result.sessionId,
-      messages: [],
+      userId: result.userId, sessionId: result.sessionId, messages: [],
       collectedSections: result.collectedSections ?? {},
       currentSectionIndex: result.currentSectionIndex ?? 0,
       allSectionsCollected: result.allSectionsCollected ?? false,
-      template: result.template,
-      documentId: '',
-      documentUrl: '',
+      template: result.template, documentId: '', documentUrl: '',
     };
 
     return {
@@ -140,62 +84,36 @@ export class AgentService implements OnModuleInit {
     };
   }
 
-  async sendMessageToEtp(
-  userId: string,
-  sessionId: string,
-  userMessage: string,
-  currentState: any,
-): Promise<{ response: string; state: any; documentUrl?: string }> {
-  const newMessage = new HumanMessage(userMessage);
-
-  const result = await this.etpReplyGraph.invoke(
-    {
-      ...currentState,
-      userId,
-      sessionId,
-      messages: [...(currentState.messages ?? []), newMessage],
-    },
-    {
-      recursionLimit: 10,
-      runName: 'agente-etp',
-      tags: ['ETP', 'licitacao'],
-      metadata: {
-        userId,
-        sessionId,
-        agentType: 'ETP',
-      },
-    },
-  );
-
-    const lastAiMessage = [...result.messages]
-      .reverse()
-      .find((m: any) => m._getType() === 'ai');
-
-    return {
-      response: lastAiMessage?.content ?? '',
-      state: result,
-      documentUrl: result.documentUrl,
-    };
+  async sendMessageToEtp(userId: string, sessionId: string, userMessage: string, currentState: any): Promise<{ response: string; state: any; documentUrl?: string }> {
+    const newMessage = new HumanMessage(userMessage);
+    const result = await this.etpReplyGraph.invoke(
+      { ...currentState, userId, sessionId, messages: [...(currentState.messages ?? []), newMessage] },
+      { recursionLimit: 10, runName: 'agente-etp', tags: ['ETP', 'licitacao'], metadata: { userId, sessionId, agentType: 'ETP' } },
+    );
+    const lastAiMessage = [...result.messages].reverse().find((m: any) => m._getType() === 'ai');
+    return { response: lastAiMessage?.content ?? '', state: result, documentUrl: result.documentUrl };
   }
 
-  // ── Memória (compatibilidade) ────────────────────
+  async respondAfterDocument(tipo: string, documentUrl: string, userMessage: string): Promise<string> {
+    const systemPrompt = `Você é um assistente especializado em licitações públicas brasileiras.
+O ${tipo} já foi gerado com sucesso e está disponível para download.
+Responda à mensagem do usuário de forma completamente natural e conversacional.
+Interprete o que ele está dizendo e responda adequadamente.
+Se pedir alterações, sugira iniciar uma nova sessão.
+Seja natural, humano e prestativo.`;
+
+    const response = await this.ai.invoke(systemPrompt, userMessage);
+    if (typeof response === 'string') return response;
+    if (Array.isArray(response)) return (response as any[]).map((b: any) => b.text || '').join('');
+    return String(response);
+  }
 
   async saveSessionState(sessionId: string, state: any): Promise<void> {
-    await this.supabase
-      .getAdminClient()
-      .from('sessions')
-      .update({ agent_state: state })
-      .eq('id', sessionId);
+    await this.supabase.getAdminClient().from('sessions').update({ agent_state: state }).eq('id', sessionId);
   }
 
   async loadSessionState(sessionId: string): Promise<any> {
-    const { data } = await this.supabase
-      .getAdminClient()
-      .from('sessions')
-      .select('agent_state')
-      .eq('id', sessionId)
-      .single();
-
+    const { data } = await this.supabase.getAdminClient().from('sessions').select('agent_state').eq('id', sessionId).single();
     return data?.agent_state ?? null;
   }
 }

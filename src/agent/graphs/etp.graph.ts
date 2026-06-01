@@ -4,55 +4,34 @@ import { EtpAgentState, EtpAgentStateType } from './etp.state';
 import { AiService } from '../ai.service';
 import { RagService } from '../../rag/rag.service';
 import { SupabaseService } from '../../supabase/supabase.service';
-import { ETP_SYSTEM_PROMPT, ETP_GENERATION_PROMPT, ETP_VALIDATION_PROMPT } from '../prompts/etp.prompt';
+import { ETP_SYSTEM_PROMPT, ETP_GENERATION_PROMPT } from '../prompts/etp.prompt';
 import { createGenerateDocxTool } from '../tools';
 
-// Grafo 1: Iniciar sessão ETP
 export const createEtpStartGraph = (supabaseService: SupabaseService) => {
   return new StateGraph(EtpAgentState)
-
     .addNode('load_template', async (state: EtpAgentStateType) => {
-      const { data } = await supabaseService
-        .getAdminClient()
-        .from('templates')
-        .select('*')
-        .eq('agent_type', 'ETP')
-        .eq('is_active', true)
-        .single();
-
+      const { data } = await supabaseService.getAdminClient()
+        .from('templates').select('*')
+        .eq('agent_type', 'ETP').eq('is_active', true).single();
       return { template: data };
     })
-
-    .addNode('ask_first_question', async (state: EtpAgentStateType) => {
+    .addNode('welcome', async (state: EtpAgentStateType) => {
       if (!state.template) return {};
-
       const sections = state.template.sections.filter((s: any) => s.required);
-      const firstSection = sections[0];
-      if (!firstSection) return {};
-
       const message = new AIMessage(
-        `Olá! Vou te ajudar a criar um **Estudo Técnico Preliminar (ETP)** ` +
-        `completo e em conformidade com o Art. 18 da Lei 14.133/2021.\n\n` +
-        `Vamos preencher as ${sections.length} seções obrigatórias uma por vez.\n\n` +
-        `**Seção 1/${sections.length} — ${firstSection.title}**\n\n` +
-        `${firstSection.description}\n\n` +
-        `${firstSection.questions[0]}`,
+        `Olá! Vou te ajudar a criar um **Estudo Técnico Preliminar (ETP)** completo em conformidade com o Art. 18 da Lei 14.133/2021.\n\n` +
+        `Me fale sobre a necessidade de contratação. Pode incluir a descrição do problema, a solução pretendida, ` +
+        `estimativas de custo e quantidade — qualquer informação que tiver.\n\n` +
+        `Se preferir, você pode enviar um arquivo de referência (PDF ou DOCX) que eu extraio as informações automaticamente e preencho as ${sections.length} seções necessárias.`,
       );
-
-      return {
-        messages: [message],
-        currentSectionIndex: 0,
-        allSectionsCollected: false,
-      };
+      return { messages: [message], currentSectionIndex: 0, allSectionsCollected: false };
     })
-
     .addEdge(START, 'load_template')
-    .addEdge('load_template', 'ask_first_question')
-    .addEdge('ask_first_question', END)
+    .addEdge('load_template', 'welcome')
+    .addEdge('welcome', END)
     .compile();
 };
 
-// Grafo 2: Processar respostas ETP
 export const createEtpReplyGraph = (
   aiService: AiService,
   ragService: RagService,
@@ -60,199 +39,119 @@ export const createEtpReplyGraph = (
 ) => {
   return new StateGraph(EtpAgentState)
 
-    .addNode('process_response', async (state: EtpAgentStateType) => {
-      const sections = state.template.sections.filter((s: any) => s.required);
-      const currentSection = sections[state.currentSectionIndex];
+    .addNode('process_message', async (state: EtpAgentStateType) => {
       const lastMessage = state.messages[state.messages.length - 1];
-      const userResponse = lastMessage.content as string;
+      const userMessage = lastMessage?.content as string ?? '';
 
-      if (!currentSection || !userResponse) return {};
+      // Documento já gerado — responde naturalmente sem tocar no grafo de geração
+      if (state.documentUrl) {
+        const aiResponse = await aiService.invoke(
+          `Você é um assistente especializado em licitações públicas brasileiras.
+O Estudo Técnico Preliminar já foi gerado com sucesso e está disponível para download.
+Responda à mensagem do usuário de forma natural e conversacional.
+Se pedir alterações no documento, sugira iniciar uma nova sessão.
+Seja humano e prestativo.`,
+          userMessage,
+        );
+        const content = typeof aiResponse === 'string' ? aiResponse : String(aiResponse);
+        return { messages: [new AIMessage(content)], allSectionsCollected: false };
+      }
 
-      const autoFillKeywords = ['preencha', 'preencher', 'automático', 'automaticamente', 'use o', 'usar o', 'com base no', 'baseado no'];
-      const isAutoFill = autoFillKeywords.some(k => userResponse.toLowerCase().includes(k));
+      if (!state.template) {
+        return {
+          messages: [new AIMessage('Ocorreu um erro ao carregar o template. Por favor, inicie uma nova sessão.')],
+        };
+      }
 
-      if (isAutoFill && state.uploadedFileContext) {
-        const ragResults = await ragService.search('Estudo Técnico Preliminar Lei 14.133 Art. 18 requisitos', 'ETP', 5);
-        const ragContext = ragService.formatForPrompt(ragResults);
+      const sections = state.template.sections.filter((s: any) => s.required);
+      const collectedSections = state.collectedSections ?? {};
+      const missingSections = sections.filter((s: any) => !collectedSections[s.key]);
 
-        const autoFillPrompt = `Com base no documento enviado pelo usuário, extraia as informações e preencha as seções do Estudo Técnico Preliminar.
+      const collectedList = Object.entries(collectedSections)
+        .map(([k, v]) => `- ${k}: ${String(v).substring(0, 200)}`)
+        .join('\n') || 'Nenhuma seção coletada ainda';
 
-DOCUMENTO DE REFERÊNCIA:
-${state.uploadedFileContext}
+      const missingList = missingSections
+        .map((s: any) => `- ${s.key}: ${s.title} — ${s.description}`)
+        .join('\n') || 'Todas as seções já foram coletadas';
 
-BASE LEGAL:
-${ragContext}
+      const fileContextBlock = state.uploadedFileContext
+        ? `\n\nDOCUMENTO DE REFERÊNCIA ENVIADO PELO USUÁRIO (${state.uploadedFileName}):\n${state.uploadedFileContext}`
+        : '';
 
-SEÇÕES QUE PRECISAM SER PREENCHIDAS:
-${sections
-  .filter((s: any) => !state.collectedSections[s.key])
-  .map((s: any) => `- ${s.key}: ${s.title} (${s.description})`)
-  .join('\n')}
+      const extractionPrompt = `Você está coletando informações para elaborar um Estudo Técnico Preliminar conforme o Art. 18 da Lei 14.133/2021.
 
-Retorne um JSON com as seções preenchidas:
+SEÇÕES JÁ COLETADAS:
+${collectedList}
+
+SEÇÕES QUE AINDA PRECISAM DE INFORMAÇÃO:
+${missingList}
+${fileContextBlock}
+
+MENSAGEM DO USUÁRIO:
+${userMessage}
+
+TAREFA:
+1. Extraia qualquer informação relevante da mensagem do usuário (e do documento, se disponível) para preencher as seções que ainda faltam.
+2. Se o usuário pedir para preencher com base no arquivo ou documento enviado, extraia o máximo de informações possíveis do documento de referência para TODAS as seções faltantes.
+3. Informações parciais são válidas — extraia tudo que for aproveitável.
+4. Se a mensagem não tiver relação com licitações ou contratos públicos, gentilmente redirecione para o contexto.
+5. Gere uma resposta natural confirmando o que foi extraído. Se ainda houver seções faltando, pergunte sobre o ponto mais relevante de forma conversacional (não liste tudo de uma vez).
+6. Se todas as seções estiverem coletadas (as já existentes + as novas), informe que vai gerar o documento agora.
+
+Retorne APENAS um JSON válido:
 {
-  "sections": {
-    "informacoes_gerais": "...",
-    "descricao_necessidade": "...",
-    "previsao_pca": "...",
-    "requisitos_contratacao": "...",
-    "estimativa_quantidades": "...",
-    "estimativa_valor": "...",
-    "levantamento_mercado": "...",
-    "descricao_solucao": "...",
-    "justificativa_parcelamento": "...",
-    "resultados_pretendidos": "...",
-    "posicionamento_conclusivo": "..."
-  }
+  "extracted": { "section_key": "valor extraído" },
+  "response": "Resposta natural ao usuário",
+  "all_collected": true | false
 }
 
-Retorne APENAS o JSON, sem texto adicional.`;
+REGRAS:
+- "extracted" deve conter apenas seções com informação concreta extraída desta interação.
+- "all_collected" deve ser true somente se TODAS as seções obrigatórias tiverem informação suficiente (já coletadas anteriormente + as novas extraídas agora).
+- Nunca invente informações — baseie-se apenas no que o usuário forneceu ou está no documento.`;
 
-        const aiResponse = await aiService.invoke(ETP_SYSTEM_PROMPT, autoFillPrompt);
+      const aiResponse = await aiService.invoke(ETP_SYSTEM_PROMPT, extractionPrompt);
 
-        try {
-          const clean = aiResponse.replace(/```json|```/g, '').trim();
-          const parsed = JSON.parse(clean);
-          const autoFilledSections = parsed.sections ?? {};
+      let extracted: Record<string, string> = {};
+      let response = '';
 
-          const confirmMessage = new AIMessage(
-            `✅ Analisei o documento **${state.uploadedFileName}** e preenchi automaticamente todas as seções.\n\nVou gerar o documento agora.`,
-          );
+      try {
+        const clean = aiResponse.replace(/```json|```/g, '').trim();
+        const parsed = JSON.parse(clean);
+        extracted = parsed.extracted ?? {};
+        response = parsed.response ?? '';
+      } catch {
+        response = aiResponse;
+      }
 
-          return {
-            collectedSections: { ...state.collectedSections, ...autoFilledSections },
-            messages: [confirmMessage],
-            allSectionsCollected: true,
-            validationPassed: true,
-          };
-        } catch {
-          // continua fluxo normal
+      // Verificação própria de completude (não depende apenas da IA)
+      const updatedSections = { ...collectedSections, ...extracted };
+      const remaining = sections.filter((s: any) => !updatedSections[s.key]);
+      const allSectionsCollected = remaining.length === 0;
+
+      if (!response) {
+        if (allSectionsCollected) {
+          response = 'Ótimo! Coletei todas as informações necessárias. Vou gerar o Estudo Técnico Preliminar agora.';
+        } else {
+          const next = remaining[0];
+          const extractedCount = Object.keys(extracted).length;
+          response = next
+            ? `${extractedCount > 0 ? 'Registrei as informações. ' : ''}Preciso ainda de informações sobre **${next.title}**: ${next.description}`
+            : 'Pode continuar me contando sobre a necessidade de contratação.';
         }
       }
 
       return {
-        collectedSections: { [currentSection.key]: userResponse },
-        validationPassed: false,
+        collectedSections: extracted,
+        messages: [new AIMessage(response)],
+        allSectionsCollected,
+        validationPassed: allSectionsCollected,
       };
-    })
-
-    .addNode('validate_response', async (state: EtpAgentStateType) => {
-  const sections = state.template.sections.filter((s: any) => s.required);
-  const currentSection = sections[state.currentSectionIndex];
-
-  if (!currentSection) return { validationPassed: true };
-
-  const lastUserMessage = [...state.messages]
-    .reverse()
-    .find((m: any) => m._getType() === 'human');
-
-  const userResponse = lastUserMessage?.content as string ?? '';
-
-  const validationPrompt = ETP_VALIDATION_PROMPT(
-    currentSection.title,
-    currentSection.description,
-    userResponse,
-  );
-
-  const validationResponse = await aiService.invoke(
-    'Você é um validador de respostas para documentos de licitação. Retorne apenas JSON.',
-    validationPrompt,
-  );
-
-  try {
-    const clean = validationResponse.replace(/```json|```/g, '').trim();
-    const result = JSON.parse(clean);
-
-    if (result.case === 1) {
-      const feedbackMessage = new AIMessage(
-        `⚠️ ${result.message}\n\n` +
-        `Estamos preenchendo a seção **${currentSection.title}** do Estudo Técnico Preliminar.\n\n` +
-        `${currentSection.questions[0]}`,
-      );
-      return {
-        validationPassed: false,
-        messages: [feedbackMessage],
-        collectedSections: (() => {
-          const updated = { ...state.collectedSections };
-          delete updated[currentSection.key];
-          return updated;
-        })(),
-      };
-    }
-
-    if (result.case === 2) {
-      const feedbackMessage = new AIMessage(
-        `⚠️ ${result.message}`,
-      );
-      return {
-        validationPassed: false,
-        messages: [feedbackMessage],
-        collectedSections: (() => {
-          const updated = { ...state.collectedSections };
-          delete updated[currentSection.key];
-          return updated;
-        })(),
-      };
-    }
-
-    if (result.case === 3) {
-      const helpMessage = new AIMessage(
-        `💡 ${result.message}`,
-      );
-      return {
-        validationPassed: false,
-        messages: [helpMessage],
-        collectedSections: (() => {
-          const updated = { ...state.collectedSections };
-          delete updated[currentSection.key];
-          return updated;
-        })(),
-      };
-    }
-
-    return { validationPassed: true };
-
-    } catch {
-        return { validationPassed: true };
-    }
-    })
-
-    .addNode('identify_section', async (state: EtpAgentStateType) => {
-      if (!state.template) return { allSectionsCollected: true };
-      const sections = state.template.sections.filter((s: any) => s.required);
-
-      for (let i = 0; i < sections.length; i++) {
-        if (!state.collectedSections[sections[i].key]) {
-          return { currentSectionIndex: i, allSectionsCollected: false };
-        }
-      }
-
-      return { allSectionsCollected: true };
-    })
-
-    .addNode('ask_question', async (state: EtpAgentStateType) => {
-      const sections = state.template.sections.filter((s: any) => s.required);
-      const currentSection = sections[state.currentSectionIndex];
-      if (!currentSection) return {};
-
-      const sectionNumber = state.currentSectionIndex + 1;
-      const totalSections = sections.length;
-
-      const message = new AIMessage(
-        `**Seção ${sectionNumber}/${totalSections} — ${currentSection.title}**\n\n` +
-        `${currentSection.description}\n\n` +
-        `${currentSection.questions[0]}`,
-      );
-
-      return { messages: [message] };
     })
 
     .addNode('generate_document', async (state: EtpAgentStateType) => {
-      const ragResults = await ragService.search(
-        'Estudo Técnico Preliminar Lei 14.133 Art. 18 requisitos',
-        'ETP',
-        8,
-      );
+      const ragResults = await ragService.search('Estudo Técnico Preliminar Lei 14.133 Art. 18 requisitos', 'ETP', 8);
       const ragContext = ragService.formatForPrompt(ragResults);
       const generationPrompt = ETP_GENERATION_PROMPT(state.collectedSections, ragContext);
       const response = await aiService.invoke(ETP_SYSTEM_PROMPT, generationPrompt);
@@ -262,81 +161,39 @@ Retorne APENAS o JSON, sem texto adicional.`;
         const clean = response.replace(/```json|```/g, '').trim();
         documentData = JSON.parse(clean);
       } catch {
-        documentData = {
-          title: 'ESTUDO TÉCNICO PRELIMINAR',
-          sections: [{ title: 'Conteúdo', content: response }],
-        };
+        documentData = { title: 'ESTUDO TÉCNICO PRELIMINAR', sections: [{ title: 'Conteúdo', content: response }] };
       }
 
-      const { data: doc } = await supabaseService
-        .getAdminClient()
-        .from('documents')
-        .insert({
-          user_id: state.userId,
-          session_id: state.sessionId,
-          agent_type: 'ETP',
-          title: documentData.title,
-          status: 'draft',
-          metadata: { sections: documentData.sections },
-        })
-        .select()
-        .single();
+      const { data: doc } = await supabaseService.getAdminClient()
+        .from('documents').insert({
+          user_id: state.userId, session_id: state.sessionId,
+          agent_type: 'ETP', title: documentData.title,
+          status: 'draft', metadata: { sections: documentData.sections },
+        }).select().single();
 
       if (!doc) return {};
 
-      const generateDocx = createGenerateDocxTool(
-        supabaseService,
-        state.userId,
-        doc.id,
-      );
-
-      const result = await generateDocx.invoke({
-        title: documentData.title,
-        sections: documentData.sections,
-      });
-
+      const generateDocx = createGenerateDocxTool(supabaseService, state.userId, doc.id);
+      const result = await generateDocx.invoke({ title: documentData.title, sections: documentData.sections });
       const urlMatch = result.match(/URL: (.+)/);
       const documentUrl = urlMatch ? urlMatch[1].trim() : '';
 
       const finalMessage = new AIMessage(
-        `✅ **Estudo Técnico Preliminar gerado com sucesso!**\n\n` +
-        `Seu documento foi criado com ${documentData.sections.length} seções ` +
-        `e está disponível para download.\n\n` +
-        `📄 [Clique aqui para baixar o documento](${documentUrl})`,
+        `**Estudo Técnico Preliminar gerado com sucesso!**\n\n` +
+        `Seu documento foi criado com ${documentData.sections.length} seções e está disponível para download.\n\n` +
+        `[Clique aqui para baixar o documento](${documentUrl})`,
       );
 
-      return {
-        documentId: doc.id,
-        documentUrl,
-        messages: [finalMessage],
-      };
+      return { documentId: doc.id, documentUrl, messages: [finalMessage] };
     })
 
-    // ARESTAS
-    .addEdge(START, 'process_response')
-    .addEdge('process_response', 'validate_response')
+    .addEdge(START, 'process_message')
     .addConditionalEdges(
-      'validate_response',
-      (state: EtpAgentStateType) => {
-        if (state.allSectionsCollected) return 'generate';
-        return state.validationPassed ? 'identify' : 'end';
-      },
-      {
-        generate: 'generate_document',
-        identify: 'identify_section',
-        end: END,
-      },
-    )
-    .addConditionalEdges(
-      'identify_section',
+      'process_message',
       (state: EtpAgentStateType) =>
-        state.allSectionsCollected ? 'generate' : 'ask',
-      {
-        ask: 'ask_question',
-        generate: 'generate_document',
-      },
+        (state.allSectionsCollected && !state.documentUrl) ? 'generate' : 'end',
+      { generate: 'generate_document', end: END },
     )
-    .addEdge('ask_question', END)
     .addEdge('generate_document', END)
     .compile();
 };

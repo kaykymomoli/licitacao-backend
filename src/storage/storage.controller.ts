@@ -147,23 +147,21 @@ export class StorageController {
     if (sessionId) {
       const currentState = await this.memoryService.loadAgentState(sessionId);
 
-      if (currentState) {
-        const updatedState = {
-          ...currentState,
-          uploadedFileContext: truncatedText,
-          uploadedFileName: fileFilename,
-          uploadedFileUrl: url,
-        };
+      const updatedState = {
+        ...(currentState ?? {}),
+        uploadedFileContext: truncatedText,
+        uploadedFileName: fileFilename,
+        uploadedFileUrl: url,
+      };
 
-        await this.memoryService.saveAgentState(sessionId, updatedState);
-        await this.memoryService.saveMessage(
-          sessionId,
-          'assistant',
-          `📎 Arquivo **${fileFilename}** recebido e analisado com sucesso.\n\n` +
-          `O conteúdo foi extraído e está disponível como contexto.\n\n` +
-          (instruction ? `Instrução: "${instruction}"` : 'Pode continuar a conversa normalmente.'),
-        );
-      }
+      await this.memoryService.saveAgentState(sessionId, updatedState);
+      await this.memoryService.saveMessage(
+        sessionId,
+        'assistant',
+        `📎 Arquivo **${fileFilename}** recebido e analisado com sucesso.\n\n` +
+        `O conteúdo foi extraído e está disponível como contexto.\n\n` +
+        (instruction ? `Instrução: "${instruction}"` : 'Pode continuar a conversa normalmente.'),
+      );
     }
 
     return {
